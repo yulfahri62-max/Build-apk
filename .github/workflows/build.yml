@@ -2,13 +2,29 @@ name: Build APK
 
 on:
   workflow_dispatch:
+    inputs:
+      zip_url:
+        description: "URL ZIP project"
+        required: true
+        type: string
+
+      tag:
+        description: "Tag Build"
+        required: true
+        type: string
+
+      build_type:
+        description: "Build Type"
+        required: true
+        type: string
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Build
-        run: echo "Build APK berhasil"
+      - name: Lihat Input
+        run: |
+          echo "ZIP: ${{ github.event.inputs.zip_url }}"
+          echo "TAG: ${{ github.event.inputs.tag }}"
+          echo "TYPE: ${{ github.event.inputs.build_type }}"
