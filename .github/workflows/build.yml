@@ -1,70 +1,65 @@
-name: Build APK
+name: Build Flutter APK
 
 on:
   workflow_dispatch:
     inputs:
       zip_url:
-        description: "URL ZIP project"
-        required: true
-        type: string
-      tag:
-        description: "Tag"
+        description: "URL ZIP Project Flutter"
         required: true
         type: string
       build_type:
         description: "debug atau release"
         required: true
         default: "debug"
-        type: string
+        type: choice
+        options:
+          - debug
+          - release
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip wget
+      - name: Install unzip
+        run: sudo apt-get update && sudo apt-get install -y unzip wget
 
       - name: Download ZIP
-        run: |
-          wget "${{ github.event.inputs.zip_url }}" -O project.zip
+        run: wget "${{ github.event.inputs.zip_url }}" -O project.zip
 
       - name: Extract ZIP
-        run: |
-          unzip project.zip -d project
+        run: unzip project.zip -d project
 
-      - name: Find Gradle project
+      - name: Find Flutter Project
         run: |
-          cd project
-          ROOT=$(find . -name gradlew | head -n 1)
-          if [ -z "$ROOT" ]; then
-            echo "gradlew tidak ditemukan"
+          DIR=$(find project -name pubspec.yaml | head -n 1)
+          if [ -z "$DIR" ]; then
+            echo "Project Flutter tidak ditemukan!"
             exit 1
           fi
-          echo "PROJECT_DIR=$(dirname "$ROOT")" >> $GITHUB_ENV
+          echo "PROJECT_DIR=$(dirname "$DIR")" >> $GITHUB_ENV
 
-      - name: Setup Java
-        uses: actions/setup-java@v4
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
         with:
-          distribution: temurin
-          java-version: 17
+          channel: stable
 
-      - name: Build
+      - name: Install Dependencies
         run: |
           cd "$PROJECT_DIR"
-          chmod +x gradlew
+          flutter pub get
 
+      - name: Build APK
+        run: |
+          cd "$PROJECT_DIR"
           if [ "${{ github.event.inputs.build_type }}" = "release" ]; then
-            ./gradlew assembleRelease
+            flutter build apk --release
           else
-            ./gradlew assembleDebug
+            flutter build apk --debug
           fi
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: apk
-          path: |
-            ${{ env.PROJECT_DIR }}/**/*.apk
+          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
