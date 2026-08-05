@@ -1,4 +1,4 @@
-name: Build Flutter APK
+name: Build APK
 
 on:
   workflow_dispatch:
@@ -6,6 +6,11 @@ on:
       zip_url:
         description: "URL ZIP Project Flutter"
         required: true
+        type: string
+      tag:
+        description: "Tag Build"
+        required: false
+        default: "v1.0"
         type: string
       build_type:
         description: "debug atau release"
@@ -21,28 +26,41 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Install unzip
-        run: sudo apt-get update && sudo apt-get install -y unzip wget
+      - name: Install Tools
+        run: |
+          sudo apt update
+          sudo apt install -y unzip wget curl git
 
       - name: Download ZIP
-        run: wget "${{ github.event.inputs.zip_url }}" -O project.zip
+        run: |
+          wget "${{ github.event.inputs.zip_url }}" -O project.zip
 
       - name: Extract ZIP
-        run: unzip project.zip -d project
+        run: |
+          unzip -q project.zip -d project
 
       - name: Find Flutter Project
         run: |
-          DIR=$(find project -name pubspec.yaml | head -n 1)
-          if [ -z "$DIR" ]; then
+          PUBSPEC=$(find project -name pubspec.yaml | head -n 1)
+          if [ -z "$PUBSPEC" ]; then
             echo "Project Flutter tidak ditemukan!"
             exit 1
           fi
-          echo "PROJECT_DIR=$(dirname "$DIR")" >> $GITHUB_ENV
+          echo "PROJECT_DIR=$(dirname "$PUBSPEC")" >> $GITHUB_ENV
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+
+      - name: Flutter Version
+        run: flutter --version
 
       - name: Install Dependencies
         run: |
@@ -61,5 +79,6 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: apk
-          path: ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
+          name: apk-${{ github.event.inputs.tag }}
+          path: |
+            ${{ env.PROJECT_DIR }}/build/app/outputs/flutter-apk/*.apk
