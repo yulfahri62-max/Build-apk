@@ -32,8 +32,24 @@ jobs:
           sudo apt install -y unzip wget curl git
 
       - name: Download ZIP
-        run: |
-          wget "${{ github.event.inputs.zip_url }}" -O project.zip
+  run: |
+    echo "=== Downloading ZIP ==="
+    echo "URL: ${{ inputs.zip_url }}"
+
+    curl -fL \
+      -H "Authorization: Bearer ${{ secrets.GH_TOKEN }}" \
+      -H "Accept: application/octet-stream" \
+      "${{ inputs.zip_url }}" \
+      -o project.zip
+
+    echo "=== File Info ==="
+    ls -lh project.zip
+
+    echo "=== File Type ==="
+    file project.zip
+
+    echo "=== Testing ZIP ==="
+    unzip -t project.zip
 
       - name: Extract ZIP
         run: |
