@@ -23,14 +23,13 @@ on:
           - release
 
       only_analyze:
-        description: "Hanya jalankan analyze"
+        description: "Hanya jalankan analyze (true/false)"
         required: false
         default: "false"
         type: boolean
 
 jobs:
   build:
-    name: Build APK
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -39,531 +38,301 @@ jobs:
 
     steps:
 
-      # ============================================================
-      # CHECKOUT
-      # ============================================================
-
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      # ============================================================
-      # NODE
-      # ============================================================
-
+      # ==========================================================
+      # NODE.JS
+      # ==========================================================
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "24"
 
-      # ============================================================
-      # DEFAULT ENV
-      # ============================================================
-
-      - name: Set Default Env
-        run: |
-          echo "PROJECT_DIR=." >> "$GITHUB_ENV"
-          mkdir -p "$GITHUB_WORKSPACE"
-
-      # ============================================================
+      # ==========================================================
       # DOWNLOAD ZIP
-      # ============================================================
-
-      - name: Download ZIP Project
+      # ==========================================================
+      - name: Download ZIP project
+        env:
+          ZIP_URL: ${{ github.event.inputs.zip_url }}
         run: |
           set -e
 
-          echo "========================================"
-          echo "Downloading Flutter Project"
-          echo "========================================"
+          echo "=========================================="
+          echo "        DOWNLOAD ZIP PROJECT"
+          echo "=========================================="
 
-          echo "URL:"
-          echo "${{ inputs.zip_url }}"
-
-          curl -fL \
-            "${{ inputs.zip_url }}" \
-            -o project.zip
-
-          echo ""
-          echo "=== File Info ==="
-          ls -lh project.zip
-
-          echo ""
-          echo "=== File Type ==="
-          file project.zip
-
-          echo ""
-          echo "=== ZIP Validation ==="
-
-          if ! unzip -t project.zip >/dev/null 2>&1; then
-            echo "ERROR: project.zip bukan ZIP yang valid."
+          if [ -z "$ZIP_URL" ]; then
+            echo "❌ ZIP URL kosong!"
             exit 1
           fi
 
-          echo "ZIP valid."
+          echo "URL: $ZIP_URL"
 
-      # ============================================================
-      # EXTRACT
-      # ============================================================
+          rm -f project.zip
 
+          curl \
+            --fail \
+            --location \
+            --show-error \
+            --retry 3 \
+            --retry-delay 3 \
+            --connect-timeout 30 \
+            --max-time 300 \
+            -H "Accept: application/octet-stream" \
+            -H "User-Agent: FlutterBuildBot/1.0" \
+            "$ZIP_URL" \
+            --output project.zip
+
+          echo ""
+          echo "=== FILE INFO ==="
+          ls -lh project.zip
+
+          echo ""
+          echo "=== FILE TYPE ==="
+          file project.zip
+
+          echo ""
+          echo "=== FIRST BYTES ==="
+          xxd -l 32 project.zip || true
+
+          echo ""
+          echo "=== ZIP VALIDATION ==="
+
+          if ! unzip -t project.zip > /dev/null 2>&1; then
+            echo "❌ File yang didownload bukan ZIP valid!"
+            echo ""
+            echo "Isi awal file:"
+            head -c 500 project.zip || true
+            exit 1
+          fi
+
+          echo "✅ ZIP VALID"
+
+      # ==========================================================
+      # EXTRACT ZIP
+      # ==========================================================
       - name: Extract ZIP
         run: |
           set -e
 
-          rm -rf project_raw
+          echo "=========================================="
+          echo "             EXTRACT PROJECT"
+          echo "=========================================="
 
+          rm -rf project_raw
           mkdir -p project_raw
 
           unzip -q project.zip -d project_raw
 
-          echo "=== Project Contents ==="
+          echo ""
+          echo "=== PROJECT CONTENT ==="
+          find project_raw -maxdepth 2 -type f | head -100
 
-          find project_raw \
-            -maxdepth 2 \
-            -type f \
-            | head -100
+          echo ""
+          echo "=== DETECTING PROJECT ROOT ==="
 
-          SUB_DIR_COUNT=$(find project_raw \
-            -maxdepth 1 \
-            -mindepth 1 \
-            -type d \
-            | wc -l)
-
-          FILE_COUNT=$(find project_raw \
-            -maxdepth 1 \
-            -mindepth 1 \
-            -type f \
-            | wc -l)
-
-          echo "SUB_DIR_COUNT=$SUB_DIR_COUNT"
-          echo "FILE_COUNT=$FILE_COUNT"
+          SUB_DIR_COUNT=$(find project_raw -mindepth 1 -maxdepth 1 -type d | wc -l)
+          FILE_COUNT=$(find project_raw -mindepth 1 -maxdepth 1 -type f | wc -l)
 
           if [ "$SUB_DIR_COUNT" -eq 1 ] && [ "$FILE_COUNT" -eq 0 ]; then
-            PROJECT_DIR=$(find project_raw \
-              -maxdepth 1 \
-              -mindepth 1 \
-              -type d \
-              | head -n 1)
+            PROJECT_DIR=$(find project_raw -mindepth 1 -maxdepth 1 -type d | head -n 1)
           else
             PROJECT_DIR="project_raw"
           fi
 
           echo "PROJECT_DIR=$PROJECT_DIR"
 
+          if [ ! -d "$PROJECT_DIR" ]; then
+            echo "❌ Project directory tidak ditemukan!"
+            exit 1
+          fi
+
           echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
 
-      # ============================================================
-      # JAVA
-      # ============================================================
+      # ==========================================================
+      # CHECK PROJECT
+      # ==========================================================
+      - name: Check Project Structure
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          echo "=========================================="
+          echo "          PROJECT STRUCTURE"
+          echo "=========================================="
 
+          pwd
+          echo ""
+
+          ls -la
+
+          echo ""
+
+          if [ -f "pubspec.yaml" ]; then
+            echo "✅ Flutter project terdeteksi"
+          elif [ -f "gradlew" ]; then
+            echo "✅ Native Android project terdeteksi"
+          elif [ -d "android" ] && [ -f "android/gradlew" ]; then
+            echo "✅ Android project terdeteksi"
+          else
+            echo "❌ Tidak menemukan pubspec.yaml atau gradlew!"
+            exit 1
+          fi
+
+      # ==========================================================
+      # JAVA
+      # ==========================================================
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
-          distribution: "temurin"
+          distribution: temurin
           java-version: "17"
+          cache: gradle
 
-      # ============================================================
-      # ANDROID SDK
-      # ============================================================
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-
-      # ============================================================
+      # ==========================================================
       # FLUTTER
-      # ============================================================
-
+      # ==========================================================
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           flutter-version: "3.41.9"
-          channel: "stable"
+          channel: stable
           cache: true
 
-      # ============================================================
-      # FLUTTER VERSION
-      # ============================================================
-
-      - name: Check Flutter
+      # ==========================================================
+      # FLUTTER DOCTOR
+      # ==========================================================
+      - name: Flutter Doctor
         run: |
           flutter --version
           flutter doctor -v
 
-      # ============================================================
+      # ==========================================================
       # ANALYZE
-      # ============================================================
-
-      - name: Analyze Project
-        if: always()
+      # ==========================================================
+      - name: Analyze Project Code
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
+          echo "=========================================="
+          echo "          CODE ANALYSIS"
+          echo "=========================================="
+
           if [ -f "pubspec.yaml" ]; then
+            echo "Menjalankan flutter analyze..."
 
-            echo "========================================"
-            echo "Flutter Analyze"
-            echo "========================================"
+            flutter analyze > analyze_report.txt 2>&1 || true
 
-            flutter analyze || true
+            echo ""
+            echo "========== ANALYZE RESULT =========="
+            cat analyze_report.txt
+            echo "========== END ANALYZE =========="
 
+            rm -f analyze_report.txt
           else
-
-            echo "pubspec.yaml tidak ditemukan."
-            echo "Analyze Flutter dilewati."
-
+            echo "Native Android project."
+            echo "Flutter analyze dilewati."
           fi
 
-      # ============================================================
+      # ==========================================================
       # STOP ANALYZE ONLY
-      # ============================================================
-
-      - name: Stop Analyze Only
-        if: ${{ inputs.only_analyze == true }}
+      # ==========================================================
+      - name: Stop if Analyze Only
+        if: ${{ github.event.inputs.only_analyze == 'true' }}
         run: |
-          echo "Analyze-only selesai."
+          echo "=========================================="
+          echo "          ANALYZE ONLY MODE"
+          echo "=========================================="
+
+          echo "Analyze selesai."
+          echo "Workflow dihentikan karena only_analyze=true."
+
           exit 0
 
-      # ============================================================
-      # FLUTTER DEPENDENCIES
-      # ============================================================
-
+      # ==========================================================
+      # FLUTTER PUB GET
+      # ==========================================================
       - name: Get Flutter Dependencies
-        if: always()
+        if: ${{ hashFiles('**/pubspec.yaml') != '' }}
         working-directory: ${{ env.PROJECT_DIR }}
         run: |
-          if [ -f "pubspec.yaml" ]; then
+          echo "=========================================="
+          echo "          FLUTTER PUB GET"
+          echo "=========================================="
 
-            echo "Running flutter pub get..."
+          flutter pub get
 
-            flutter pub get
-
-          else
-
-            echo "pubspec.yaml tidak ditemukan."
-            echo "Flutter pub get dilewati."
-
-          fi
-
-      # ============================================================
+      # ==========================================================
       # BUILD APK
-      # ============================================================
-
+      # ==========================================================
       - name: Build APK
-        id: build_apk
-        if: always()
         working-directory: ${{ env.PROJECT_DIR }}
+        env:
+          BUILD_TYPE: ${{ github.event.inputs.build_type }}
         run: |
-          set +e
+          set -e
 
-          BUILD_EXIT=0
+          echo "=========================================="
+          echo "             BUILD APK"
+          echo "=========================================="
 
-          # --------------------------------------------------------
-          # FLUTTER PROJECT
-          # --------------------------------------------------------
+          echo "Build mode: $BUILD_TYPE"
 
           if [ -f "pubspec.yaml" ]; then
 
-            echo "========================================"
-            echo "Flutter project detected"
-            echo "========================================"
+            echo "🔥 Flutter project detected."
 
-            if [ "${{ inputs.build_type }}" = "debug" ]; then
-
+            if [ "$BUILD_TYPE" = "debug" ]; then
               flutter build apk --debug
-
-              BUILD_EXIT=$?
-
             else
-
               flutter build apk --release
-
-              BUILD_EXIT=$?
-
             fi
 
-          # --------------------------------------------------------
-          # NATIVE ANDROID PROJECT
-          # --------------------------------------------------------
+          elif [ -f "gradlew" ]; then
+
+            echo "☕ Native Android project detected."
+
+            chmod +x gradlew
+
+            if [ "$BUILD_TYPE" = "debug" ]; then
+              ./gradlew assembleDebug
+            else
+              ./gradlew assembleRelease
+            fi
+
+          elif [ -f "android/gradlew" ]; then
+
+            echo "☕ Flutter/Android project with nested Gradle detected."
+
+            cd android
+
+            chmod +x gradlew
+
+            if [ "$BUILD_TYPE" = "debug" ]; then
+              ./gradlew assembleDebug
+            else
+              ./gradlew assembleRelease
+            fi
 
           else
 
-            echo "========================================"
-            echo "Native Android project detected"
-            echo "========================================"
-
-            GRADLE_PATH=$(find . \
-              -name "gradlew" \
-              -type f \
-              | head -n 1)
-
-            if [ -z "$GRADLE_PATH" ]; then
-
-              echo "gradlew tidak ditemukan."
-
-              BUILD_EXIT=1
-
-            else
-
-              echo "Gradle wrapper:"
-              echo "$GRADLE_PATH"
-
-              chmod +x "$GRADLE_PATH"
-
-              GRADLE_DIR=$(dirname "$GRADLE_PATH")
-
-              cd "$GRADLE_DIR"
-
-              SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
-
-              if [ -n "$SDK_ROOT" ]; then
-                echo "sdk.dir=$SDK_ROOT" > local.properties
-              fi
-
-              if [ "${{ inputs.build_type }}" = "debug" ]; then
-
-                ./gradlew \
-                  assembleDebug \
-                  --stacktrace \
-                  --no-daemon
-
-                BUILD_EXIT=$?
-
-              else
-
-                ./gradlew \
-                  assembleRelease \
-                  --stacktrace \
-                  --no-daemon
-
-                BUILD_EXIT=$?
-
-              fi
-
-            fi
+            echo "❌ gradlew dan pubspec.yaml tidak ditemukan!"
+            exit 1
 
           fi
 
-          echo "BUILD_EXIT=$BUILD_EXIT"
-
-          echo "build_step_exit=$BUILD_EXIT" >> "$GITHUB_OUTPUT"
-
-          exit 0
-
-      # ============================================================
-      # CHECK MAIN APK
-      # ============================================================
-
+      # ==========================================================
+      # FIND APK
+      # ==========================================================
       - name: Find APK
-        if: always()
         run: |
-          echo "========================================"
-          echo "Searching APK"
-          echo "========================================"
+          set -e
 
-          APK_FOUND=$(find "$GITHUB_WORKSPACE" \
+          echo "=========================================="
+          echo "             APK SCANNER"
+          echo "=========================================="
+
+          echo "Mencari APK..."
+
+          find "$GITHUB_WORKSPACE" \
             -type f \
             -name "*.apk" \
-            | head -n 1)
-
-          if [ -n "$APK_FOUND" ]; then
-
-            echo "APK ditemukan:"
-            echo "$APK_FOUND"
-
-            APK_PATH="${APK_FOUND#$GITHUB_WORKSPACE/}"
-
-            echo "APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
-
-          else
-
-            echo "Tidak ada APK dari build utama."
-
-          fi
-
-      # ============================================================
-      # FALLBACK APK
-      # ============================================================
-
-      - name: Create Fallback APK
-        if: ${{ always() && env.APK_PATH == '' }}
-        run: |
-          set +e
-
-          echo "========================================"
-          echo "Creating fallback APK"
-          echo "========================================"
-
-          FALLBACK_DIR="$GITHUB_WORKSPACE/__fallback_apk"
-
-          rm -rf "$FALLBACK_DIR"
-
-          mkdir -p "$FALLBACK_DIR"
-
-          cd "$FALLBACK_DIR"
-
-          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME}}"
-
-          if [ -z "$SDK_ROOT" ]; then
-            echo "Android SDK tidak ditemukan."
-            exit 0
-          fi
-
-          BUILD_TOOLS_DIR=$(find "$SDK_ROOT/build-tools" \
-            -mindepth 1 \
-            -maxdepth 1 \
-            -type d \
-            | sort -V \
-            | tail -n 1)
-
-          PLATFORM_DIR=$(find "$SDK_ROOT/platforms" \
-            -mindepth 1 \
-            -maxdepth 1 \
-            -type d \
-            | sort -V \
-            | tail -n 1)
-
-          if [ -z "$BUILD_TOOLS_DIR" ]; then
-            echo "Build tools tidak ditemukan."
-            exit 0
-          fi
-
-          if [ -z "$PLATFORM_DIR" ]; then
-            echo "Android platform tidak ditemukan."
-            exit 0
-          fi
-
-          AAPT2="$BUILD_TOOLS_DIR/aapt2"
-          ZIPALIGN="$BUILD_TOOLS_DIR/zipalign"
-          APKSIGNER="$BUILD_TOOLS_DIR/apksigner"
-          ANDROID_JAR="$PLATFORM_DIR/android.jar"
-
-          mkdir -p res/values
-
-          # --------------------------------------------------------
-          # STRINGS XML
-          # --------------------------------------------------------
-
-          printf '%s\n' \
-            '<?xml version="1.0" encoding="utf-8"?>' \
-            '<resources>' \
-            '    <string name="app_name">Build Fallback</string>' \
-            '</resources>' \
-            > res/values/strings.xml
-
-          # --------------------------------------------------------
-          # MANIFEST
-          # --------------------------------------------------------
-
-          printf '%s\n' \
-            '<?xml version="1.0" encoding="utf-8"?>' \
-            '<manifest xmlns:android="http://schemas.android.com/apk/res/android"' \
-            '    package="com.fallback.placeholder">' \
-            '    <uses-sdk' \
-            '        android:minSdkVersion="21"' \
-            '        android:targetSdkVersion="34" />' \
-            '    <application' \
-            '        android:label="@string/app_name"' \
-            '        android:hasCode="false" />' \
-            '</manifest>' \
-            > AndroidManifest.xml
-
-          # --------------------------------------------------------
-          # AAPT2 COMPILE
-          # --------------------------------------------------------
-
-          "$AAPT2" compile \
-            --dir res \
-            -o compiled.zip
-
-          if [ $? -ne 0 ]; then
-            echo "aapt2 compile gagal."
-            exit 0
-          fi
-
-          # --------------------------------------------------------
-          # AAPT2 LINK
-          # --------------------------------------------------------
-
-          "$AAPT2" link \
-            -o placeholder-unsigned.apk \
-            -I "$ANDROID_JAR" \
-            --manifest AndroidManifest.xml \
-            -R compiled.zip \
-            --auto-add-overlay
-
-          if [ $? -ne 0 ]; then
-            echo "aapt2 link gagal."
-            exit 0
-          fi
-
-          # --------------------------------------------------------
-          # KEYSTORE
-          # --------------------------------------------------------
-
-          keytool \
-            -genkeypair \
-            -v \
-            -keystore placeholder.keystore \
-            -alias placeholder \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass placeholder123 \
-            -keypass placeholder123 \
-            -dname "CN=Fallback"
-
-          if [ $? -ne 0 ]; then
-            echo "keytool gagal."
-            exit 0
-          fi
-
-          # --------------------------------------------------------
-          # ZIPALIGN
-          # --------------------------------------------------------
-
-          "$ZIPALIGN" \
-            -f \
-            -p \
-            4 \
-            placeholder-unsigned.apk \
-            placeholder-aligned.apk
-
-          if [ $? -ne 0 ]; then
-            echo "zipalign gagal."
-            exit 0
-          fi
-
-          # --------------------------------------------------------
-          # SIGN APK
-          # --------------------------------------------------------
-
-          "$APKSIGNER" sign \
-            --ks placeholder.keystore \
-            --ks-pass pass:placeholder123 \
-            --key-pass pass:placeholder123 \
-            --out "$GITHUB_WORKSPACE/placeholder-fallback.apk" \
-            placeholder-aligned.apk
-
-          if [ -f "$GITHUB_WORKSPACE/placeholder-fallback.apk" ]; then
-
-            echo "Fallback APK berhasil dibuat."
-
-            echo "APK_PATH=placeholder-fallback.apk" >> "$GITHUB_ENV"
-
-          else
-
-            echo "Fallback APK gagal dibuat."
-
-          fi
-
-      # ============================================================
-      # FINAL APK CHECK
-      # ============================================================
-
-      - name: Final APK Check
-        if: always()
-        run: |
-          echo "========================================"
-          echo "Final APK Check"
-          echo "========================================"
+            -print
 
           APK_FOUND=$(find "$GITHUB_WORKSPACE" \
             -type f \
@@ -571,31 +340,47 @@ jobs:
             | head -n 1)
 
           if [ -z "$APK_FOUND" ]; then
-
-            echo "ERROR: Tidak ada APK."
-
+            echo ""
+            echo "❌ APK tidak ditemukan!"
             exit 1
-
           fi
-
-          echo "APK:"
-          echo "$APK_FOUND"
 
           APK_PATH="${APK_FOUND#$GITHUB_WORKSPACE/}"
 
-          echo "APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
+          echo ""
+          echo "✅ APK ditemukan:"
+          echo "$APK_PATH"
 
+          echo ""
+          echo "=== APK SIZE ==="
           ls -lh "$APK_FOUND"
 
-      # ============================================================
-      # UPLOAD ARTIFACT
-      # ============================================================
+          echo "APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
 
-      - name: Upload APK Artifact
-        if: always()
+      # ==========================================================
+      # UPLOAD APK ARTIFACT
+      # ==========================================================
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: flutter-${{ inputs.build_type }}-${{ inputs.tag }}
-          path: ${{ env.APK_PATH }}
+          name: flutter-${{ github.event.inputs.build_type }}-${{ github.event.inputs.tag }}
+          path: ${{ github.workspace }}/${{ env.APK_PATH }}
           retention-days: 1
           if-no-files-found: error
+
+      # ==========================================================
+      # FINAL
+      # ==========================================================
+      - name: Build Complete
+        run: |
+          echo "=========================================="
+          echo "             BUILD SUCCESS"
+          echo "=========================================="
+
+          echo "Tag       : ${{ github.event.inputs.tag }}"
+          echo "Build Type: ${{ github.event.inputs.build_type }}"
+          echo "APK       : ${{ env.APK_PATH }}"
+
+          echo ""
+          echo "✅ APK berhasil dibuat."
+          echo "=========================================="
